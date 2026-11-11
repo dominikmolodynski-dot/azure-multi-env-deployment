@@ -1,0 +1,130 @@
+# Multi-environment deployment pipeline
+#
+#   PR to develop/main  -> Validate + Build
+#   merge to develop    -> Validate + Build + Deploy to dev
+#   merge to main       -> Validate + Build + Plan prod + (manual approval) + Deploy to prod
+
+trigger:
+  branches:
+    include: [main, develop]
+
+pr:
+  branches:
+    include: [main, develop]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # --- Edit these three to match your setup (see README) ---
+  azureServiceConnection: azure-service-connection
+  tfStateResourceGroup: rg-tfstate
+  tfStateStorageAccount: CHANGE_ME # printed by scripts/bootstrap-backend.sh
+  # ----------------------------------------------------------
+  tfStateContainer: tfstate
+  terraformVersion: 1.9.8
+  pythonVersion: '3.12'
+
+stages:
+  # 1. Validate & Lint -------------------------------------------------------
+  - stage: Validate
+    displayName: Validate & Lint
+    jobs:
+      - job: Terraform
+        displayName: Terraform fmt, validate, tflint
+        steps:
+          - template: pipelines/templates/install-terraform.yml
+
+          - bash: terraform fmt -check -recursive -diff
+            displayName: terraform fmt
+            workingDirectory: terraform
+
+          - bash: |
+              set -euo pipefail
+              terraform init -backend=false -input=false
+              terraform validate
+            displayName: terraform validate
+            workingDirectory: terraform
+
+          - bash: |
+              set -euo pipefail
+              curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+              tflint --init
+              tflint --recursive
+            displayName: tflint
+            workingDirectory: terraform
+
+      - job: App
+        displayName: App lint + unit tests
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+
+          - bash: pip install -r requirements-dev.txt
+            displayName: Install dependencies
+
+          - bash: ruff check .
+            displayName: Lint (ruff)
+
+          - bash: pytest --junitxml=test-results.xml
+            displayName: Unit tests (pytest)
+
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: test-results.xml
+
+  # 2. Build -----------------------------------------------------------------
+  - stage: Build
+    dependsOn: Validate
+    jobs:
+      - job: Package
+        displayName: Package app
+        steps:
+          - task: ArchiveFiles@2
+            displayName: Zip app
+            inputs:
+              rootFolderOrFile: app
+              includeRootFolder: false
+              archiveFile: $(Build.ArtifactStagingDirectory)/app.zip
+
+          - publish: $(Build.ArtifactStagingDirectory)/app.zip
+            artifact: app
+            displayName: Publish artifact
+
+  # 3. Deploy to dev (merge to develop) ---------------------------------------
+  - stage: DeployDev
+    displayName: Deploy to dev
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - template: pipelines/templates/deploy-environment.yml
+        parameters:
+          environment: dev
+          adoEnvironment: dev
+
+  # 4a. Plan prod (merge to main) - shows the approver what will change -------
+  - stage: PlanProd
+    displayName: Plan production
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Plan
+        displayName: Terraform plan (prod)
+        steps:
+          - template: pipelines/templates/terraform-run.yml
+            parameters:
+              action: plan
+              environment: prod
+
+  # 4b. Deploy to prod - waits for the approval set on the "production" environment
+  - stage: DeployProd
+    displayName: Deploy to production
+    dependsOn: PlanProd
+    jobs:
+      - template: pipelines/templates/deploy-environment.yml
+        parameters:
+          environment: prod
+          adoEnvironment: production

@@ -1,0 +1,47 @@
+# Provisions the infrastructure for one environment and deploys the app to it.
+parameters:
+  - name: environment # Terraform environment: selects the tfvars file and state
+    type: string
+    values: [dev, prod]
+  - name: adoEnvironment # Azure DevOps environment: approvals and checks live here
+    type: string
+
+jobs:
+  - deployment: Deploy
+    displayName: Terraform apply + app deploy (${{ parameters.environment }})
+    environment: ${{ parameters.adoEnvironment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - template: terraform-run.yml
+              parameters:
+                action: apply
+                environment: ${{ parameters.environment }}
+
+            # The "app" artifact is downloaded automatically by the deployment job.
+            - task: AzureWebApp@1
+              displayName: Deploy app package
+              inputs:
+                azureSubscription: $(azureServiceConnection)
+                appType: webAppLinux
+                appName: $(webAppName)
+                package: $(Pipeline.Workspace)/app/app.zip
+
+            - bash: |
+                set -euo pipefail
+                url="https://$(webAppHostname)/health"
+                for attempt in {1..30}; do
+                  if curl -fsS --max-time 10 "$url"; then
+                    echo
+                    echo "Healthy after $attempt attempt(s): $url"
+                    exit 0
+                  fi
+                  echo "Attempt $attempt failed, retrying in 10s..."
+                  sleep 10
+                done
+                echo "Smoke test failed: $url" >&2
+                exit 1
+              displayName: Smoke test /health

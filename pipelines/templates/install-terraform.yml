@@ -1,0 +1,11 @@
+# Installs a pinned Terraform version (no marketplace extension required).
+steps:
+  - bash: |
+      set -euo pipefail
+      curl -fsSLo "$AGENT_TEMPDIRECTORY/terraform.zip" \
+        "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+      unzip -o -q "$AGENT_TEMPDIRECTORY/terraform.zip" -d "$AGENT_TEMPDIRECTORY/terraform-bin"
+      echo "##vso[task.prependpath]$AGENT_TEMPDIRECTORY/terraform-bin"
+    displayName: Install Terraform $(terraformVersion)
+    env:
+      TF_VERSION: $(terraformVersion)

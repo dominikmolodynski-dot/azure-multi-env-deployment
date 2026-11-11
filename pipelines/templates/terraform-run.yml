@@ -1,0 +1,25 @@
+# Runs `terraform plan` or `terraform apply` for one environment.
+parameters:
+  - name: action
+    type: string
+    values: [plan, apply]
+  - name: environment
+    type: string
+    values: [dev, prod]
+
+steps:
+  - template: install-terraform.yml
+
+  - task: AzureCLI@2
+    displayName: Terraform ${{ parameters.action }} (${{ parameters.environment }})
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      scriptType: bash
+      scriptLocation: scriptPath
+      scriptPath: $(Build.SourcesDirectory)/pipelines/scripts/terraform.sh
+      arguments: ${{ parameters.action }} ${{ parameters.environment }}
+      addSpnToEnvironment: true
+    env:
+      TF_STATE_RESOURCE_GROUP: $(tfStateResourceGroup)
+      TF_STATE_STORAGE_ACCOUNT: $(tfStateStorageAccount)
+      TF_STATE_CONTAINER: $(tfStateContainer)
