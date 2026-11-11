@@ -81,6 +81,13 @@ python app/app.py   # http://localhost:8000
 
 Without `STORAGE_TABLE_ENDPOINT` set, the counter is kept in memory.
 
+### PyCharm
+
+Open the repository folder as a project, create a virtualenv interpreter when
+prompted and install `requirements-dev.txt`. Mark `app/` as *Sources Root* so
+imports resolve. Two shared run configurations from `.run/` appear in the
+toolbar: **Run app** and **Tests**.
+
 ## Setup
 
 You need an Azure subscription, an Azure DevOps organization and the Azure CLI.
